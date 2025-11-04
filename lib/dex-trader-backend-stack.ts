@@ -32,13 +32,14 @@ export class DexTraderBackendStack extends cdk.Stack {
     });
 
     // SNS for notifications
-    const notificationEmail = process.env.NOTIFICATION_EMAIL;
+    const notificationEmail = this.node.tryGetContext('notificationEmail');
     if (!notificationEmail) {
       throw new Error('Environment variable NOTIFICATION_EMAIL must be set');
     }
+    
     const notificationsTopic = new sns.Topic(this, 'DEXNotificationsTopic');
     notificationsTopic.addSubscription(
-      new subscriptions.EmailSubscription(process.env.NOTIFICATION_EMAIL || '')
+      new subscriptions.EmailSubscription(notificationEmail)
     );
 
     // Lambda for managing WebSocket connections
