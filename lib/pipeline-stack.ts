@@ -12,7 +12,8 @@ export class PipelineStack extends cdk.Stack {
     const pipeline = new CodePipeline(this, 'Pipeline', {
       pipelineName: 'DEXTradingPlatformPipeline',
       synth: new ShellStep('Synth', {
-        input: CodePipelineSource.gitHub(`${repoOwner}/${repoName}`, repoBranch),
+        input: CodePipelineSource.gitHub(`${repoOwner}/${repoName}`, repoBranch, {
+          authentication: cdk.SecretValue.secretsManager('dex-github'),}),
         commands: [
           'npm ci',
           'npm run build',
