@@ -32,6 +32,10 @@ export class DexTraderBackendStack extends cdk.Stack {
     });
 
     // SNS for notifications
+    const notificationEmail = process.env.NOTIFICATION_EMAIL;
+    if (!notificationEmail) {
+      throw new Error('Environment variable NOTIFICATION_EMAIL must be set');
+    }
     const notificationsTopic = new sns.Topic(this, 'DEXNotificationsTopic');
     notificationsTopic.addSubscription(
       new subscriptions.EmailSubscription(process.env.NOTIFICATION_EMAIL || '')
@@ -94,7 +98,7 @@ export class DexTraderBackendStack extends cdk.Stack {
     });
 
     // --- WebSocket API ---
-    const websocketApi = new apigatewayv2.WebSocketApi(this, 'TradingWebSocketApi', {
+    const websocketApi = new apigatewayv2.WebSocketApi(this, 'DEXTradingWebSocketApi', {
       connectRouteOptions: { integration: new integrations.WebSocketLambdaIntegration('ConnectIntegration', connectLambda) },
       disconnectRouteOptions: { integration: new integrations.WebSocketLambdaIntegration('DisconnectIntegration', disconnectLambda) },
       defaultRouteOptions: { integration: new integrations.WebSocketLambdaIntegration('DefaultIntegration', matcherLambda) },
