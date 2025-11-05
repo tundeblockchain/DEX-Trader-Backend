@@ -11,7 +11,14 @@ const connectionsTable = process.env.CONNECTIONS_TABLE!;
 
 export const handler = async (event: any) => {
   const { connectionId, domainName, stage } = event.requestContext;
-  const order = JSON.parse(event.body);
+  let order;
+
+  try {
+    order = typeof event.body === "string" ? JSON.parse(event.body) : event.body;
+  } catch (err) {
+    console.error("Bad JSON:", err);
+    return { statusCode: 400, body: "Invalid order format" };
+  }
 
   // Process order logic (simplified)
   const matched = Math.random() > 0.5; // logic for demo
