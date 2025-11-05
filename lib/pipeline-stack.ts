@@ -7,14 +7,14 @@ export class PipelineStack extends cdk.Stack {
   constructor(scope: cdk.App, id: string, props?: cdk.StackProps) {
     super(scope, id, props);
     console.log('Setting up pipeline stack');
-    const repoOwner = process.env.GITHUB_OWNER ?? 'your-github-user';
-    const repoName = process.env.GITHUB_REPO ?? 'trading-platform';
-    const repoBranch = process.env.GITHUB_BRANCH ?? 'master';
+    const repoOwner = this.node.tryGetContext('githubOwner');
+    const repoName = this.node.tryGetContext('githubRepo');
+    const repoBranch = this.node.tryGetContext('githubBranch'); 
     const pipeline = new CodePipeline(this, 'Pipeline', {
       pipelineName: 'DEXTradingPlatformPipeline',
       synth: new ShellStep('Synth', {
         input: CodePipelineSource.connection(`${repoOwner}/${repoName}`, repoBranch, {
-            connectionArn: process.env.CODESTAR_CONNECTION_ARN!,
+            connectionArn: this.node.tryGetContext('connectionURN'),
         }),
         commands: [
           'npm ci',

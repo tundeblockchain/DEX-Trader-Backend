@@ -77,6 +77,10 @@
     "@aws-cdk/aws-lambda-nodejs:sdkV3ExcludeSmithyPackages": true,
     "@aws-cdk/aws-stepfunctions-tasks:fixRunEcsTaskPolicy": true,
     "@aws-cdk/aws-ec2:bastionHostUseAmazonLinux2023ByDefault": true,
-    "notificationEmail": "you@example.com"
+    "notificationEmail": "you@example.com",
+    "githubOwner": "tundeblockchain",
+    "githubRepo": "DEX-Trader-Backend",
+    "githubBranch": "master",
+    "connectionURN": "arn:aws:codeconnections:eu-west-2:667167472868:connection/39ab0280-0a40-459b-a945-48ba7b3805d3"
   }
 }
