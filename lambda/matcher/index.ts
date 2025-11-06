@@ -61,7 +61,7 @@ export const handler = async (event: any) => {
       }
     }
 
-    return { statusCode: 200 };
+    return { statusCode: 200, body: JSON.stringify({ message: "Order Created Successfully" }) };
   } catch (err: any) {
     console.error("Unexpected error in matcher handler:", err);
     return { 
