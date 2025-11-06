@@ -34,7 +34,7 @@ The backend includes a scheduled Lambda (`DEXPriceFeedLambda`) that polls the Bi
 
 - `binanceBaseUrl` (optional): Override the Binance API base URL. Defaults to `https://api.binance.com/api/v3`.
 - `binanceSymbolOverrides` (optional): JSON object mapping tickers to Binance symbols or objects `{ "symbol": "BTCUSDT", "supply": 21000000 }`. Use this when Binance updates ticker names or you add new pairs.
-- `priceFeedRefreshIntervalSeconds` (optional): Override the 30-second polling cadence.
+- `priceFeedRefreshIntervalSeconds` (optional): Override the polling cadence (default 30 seconds via EventBridge Scheduler).
 
 The Lambda emits WebSocket messages of the form:
 
