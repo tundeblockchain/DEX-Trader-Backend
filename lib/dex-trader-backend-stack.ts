@@ -21,6 +21,13 @@ export class DexTraderBackendStack extends cdk.Stack {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
     });
 
+    // Add GSI for querying orders by owner
+    orderBookTable.addGlobalSecondaryIndex({
+      indexName: 'OwnerIndex',
+      partitionKey: { name: 'owner', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'orderId', type: dynamodb.AttributeType.STRING },
+    });
+
     // DynamoDB Table (WebSocket Connections)
     const connectionsTable = new dynamodb.Table(this, 'DEXConnections', {
       partitionKey: { name: 'connectionId', type: dynamodb.AttributeType.STRING },
@@ -93,6 +100,7 @@ export class DexTraderBackendStack extends cdk.Stack {
       environment: {
         ORDERBOOK_TABLE: orderBookTable.tableName,
         TRADE_QUEUE_URL: tradeEventsQueue.queueUrl,
+        CONNECTIONS_TABLE: connectionsTable.tableName,
         WEBSOCKET_ENDPOINT: websocketEndpoint,
       },
     });
@@ -147,8 +155,64 @@ export class DexTraderBackendStack extends cdk.Stack {
       batchSize: 10,
     });
 
-    new cdk.CfnOutput(this, 'ApiUrl', {
+    // Order Management Lambdas
+    // Lambda to get orders by symbol
+    const getOrdersBySymbolLambda = new lambda.Function(this, 'GetOrdersBySymbolLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lambda/getOrdersBySymbol'),
+      timeout: cdk.Duration.seconds(10),
+      environment: {
+        ORDERBOOK_TABLE: orderBookTable.tableName,
+      },
+    });
+    orderBookTable.grantReadData(getOrdersBySymbolLambda);
+
+    // Lambda to get orders by owner
+    const getOrdersByOwnerLambda = new lambda.Function(this, 'GetOrdersByOwnerLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lambda/getOrdersByOwner'),
+      timeout: cdk.Duration.seconds(10),
+      environment: {
+        ORDERBOOK_TABLE: orderBookTable.tableName,
+        OWNER_INDEX_NAME: 'OwnerIndex',
+      },
+    });
+    orderBookTable.grantReadData(getOrdersByOwnerLambda);
+
+    // REST API (HTTP API) for order management
+    const httpApi = new apigatewayv2.HttpApi(this, 'DEXOrderManagementApi', {
+      description: 'REST API for DEX order management',
+      corsPreflight: {
+        allowOrigins: ['*'],
+        allowMethods: [apigatewayv2.CorsHttpMethod.GET],
+        allowHeaders: ['Content-Type', 'Authorization'],
+      },
+    });
+
+    // Add routes for order management
+    httpApi.addRoutes({
+      path: '/orders/symbol/{symbol}',
+      methods: [apigatewayv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration('GetOrdersBySymbolIntegration', getOrdersBySymbolLambda),
+    });
+
+    httpApi.addRoutes({
+      path: '/orders/owner/{owner}',
+      methods: [apigatewayv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration('GetOrdersByOwnerIntegration', getOrdersByOwnerLambda),
+    });
+
+    // Outputs
+    new cdk.CfnOutput(this, 'WebSocketApiUrl', {
       value: stage.url,
+      description: 'WebSocket API URL',
+    });
+
+    new cdk.CfnOutput(this, 'RestApiUrl', {
+      value: httpApi.url!,
+      description: 'REST API URL for order management',
     });
   }
 }

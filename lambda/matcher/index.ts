@@ -22,6 +22,38 @@ export const handler = async (event: any) => {
       return { statusCode: 400, body: "Invalid order format" };
     }
 
+    // Validate required fields
+    if (!order.symbol || !order.price || !order.qty || !order.owner) {
+      return { statusCode: 400, body: JSON.stringify({ error: "Missing required fields: symbol, price, qty, owner" }) };
+    }
+
+    // Generate order ID
+    const orderId = randomUUID();
+    const timestamp = new Date().toISOString();
+
+    // Store order in DynamoDB
+    try {
+      await ddb.send(
+        new PutItemCommand({
+          TableName: tableName,
+          Item: {
+            symbol: { S: order.symbol },
+            orderId: { S: orderId },
+            owner: { S: order.owner },
+            price: { N: order.price.toString() },
+            qty: { N: order.qty.toString() },
+            side: { S: order.side || "BUY" }, // BUY or SELL
+            status: { S: "PENDING" }, // PENDING, FILLED, CANCELLED
+            createdAt: { S: timestamp },
+            updatedAt: { S: timestamp },
+          },
+        })
+      );
+    } catch (err: any) {
+      console.error("Error storing order in DynamoDB:", err);
+      return { statusCode: 500, body: JSON.stringify({ error: "Failed to store order" }) };
+    }
+
     // Process order logic (simplified)
     const matched = Math.random() > 0.5; // logic for demo
 
@@ -33,7 +65,10 @@ export const handler = async (event: any) => {
       await mgmt.send(
         new PostToConnectionCommand({
           ConnectionId: connectionId,
-          Data: Buffer.from(JSON.stringify({ status: "Order received", order })),
+          Data: Buffer.from(JSON.stringify({ 
+            status: "Order received", 
+            order: { ...order, orderId, timestamp } 
+          })),
         })
       );
     } catch (err: any) {
@@ -48,9 +83,11 @@ export const handler = async (event: any) => {
             QueueUrl: tradeQueueUrl,
             MessageBody: JSON.stringify({
               tradeId: randomUUID(),
+              orderId: orderId,
               symbol: order.symbol,
               price: order.price,
               qty: order.qty,
+              owner: order.owner,
             }),
           })
         );
@@ -61,7 +98,14 @@ export const handler = async (event: any) => {
       }
     }
 
-    return { statusCode: 200, body: JSON.stringify({ message: "Order Created Successfully" }) };
+    return { 
+      statusCode: 200, 
+      body: JSON.stringify({ 
+        message: "Order Created Successfully",
+        orderId: orderId,
+        order: { ...order, orderId, timestamp }
+      }) 
+    };
   } catch (err: any) {
     console.error("Unexpected error in matcher handler:", err);
     return { 
