@@ -8,6 +8,8 @@ import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as iam from 'aws-cdk-lib/aws-iam';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as targets from 'aws-cdk-lib/aws-events-targets';
 
 export class DexTraderBackendStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -174,6 +176,46 @@ export class DexTraderBackendStack extends cdk.Stack {
     eventProcessorLambda.addEventSourceMapping('DEXTradeQueueEventSource', {
       eventSourceArn: tradeEventsQueue.queueArn,
       batchSize: 10,
+    });
+
+    // Binance Price Feed Lambda
+    const binanceBaseUrl =
+      this.node.tryGetContext('binanceBaseUrl') ?? 'https://api.binance.com/api/v3';
+    const binanceSymbolOverridesContext =
+      this.node.tryGetContext('binanceSymbolOverrides');
+    const binanceSymbolOverrides =
+      typeof binanceSymbolOverridesContext === 'string'
+        ? JSON.parse(binanceSymbolOverridesContext)
+        : binanceSymbolOverridesContext ?? {};
+
+    const priceFeedLambda = new lambda.Function(this, 'DEXPriceFeedLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lambda/priceFeed'),
+      timeout: cdk.Duration.seconds(10),
+      environment: {
+        CONNECTIONS_TABLE: connectionsTable.tableName,
+        WEBSOCKET_ENDPOINT: websocketEndpoint,
+        BINANCE_BASE_URL: binanceBaseUrl,
+        BINANCE_SYMBOL_MAP: JSON.stringify(binanceSymbolOverrides),
+      },
+    });
+
+    connectionsTable.grantReadData(priceFeedLambda);
+    priceFeedLambda.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['execute-api:ManageConnections'],
+        resources: [`arn:aws:execute-api:${this.region}:${this.account}:${websocketApi.apiId}/${stage.stageName}/*/*`],
+      })
+    );
+
+    const priceFeedRefreshSeconds =
+      Number(this.node.tryGetContext('priceFeedRefreshIntervalSeconds')) || 30;
+
+    new events.Rule(this, 'DEXPriceFeedScheduleRule', {
+      schedule: events.Schedule.rate(cdk.Duration.seconds(priceFeedRefreshSeconds)),
+      targets: [new targets.LambdaFunction(priceFeedLambda)],
     });
 
     // Order Management Lambdas

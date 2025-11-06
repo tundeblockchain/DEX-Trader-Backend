@@ -81,6 +81,17 @@
     "githubOwner": "tundeblockchain",
     "githubRepo": "DEX-Trader-Backend",
     "githubBranch": "master",
-    "connectionURN": "arn:aws:codeconnections:eu-west-2:667167472868:connection/39ab0280-0a40-459b-a945-48ba7b3805d3"
+    "connectionURN": "arn:aws:codeconnections:eu-west-2:667167472868:connection/39ab0280-0a40-459b-a945-48ba7b3805d3",
+    "binanceBaseUrl": "https://api.binance.com/api/v3",
+    "binanceSymbolOverrides": {
+      "BTCUSDT": "BTCUSDT",
+      "ETHUSDT": "ETHUSDT",
+      "SOLUSDT": "SOLUSDT",
+      "XRPUSDT": "XRPUSDT",
+      "DOGEUSDT": "DOGEUSDT",
+      "ADAUSDT": "ADAUSDT",
+      "DOTUSDT": "DOTUSDT",
+      "LINKUSDT": "LINKUSDT"
+    }
   }
 }
