@@ -231,11 +231,18 @@ export class DexTraderBackendStack extends cdk.Stack {
     // REST API (HTTP API) for order management
     const httpApi = new apigatewayv2.HttpApi(this, 'DEXOrderManagementApi', {
       description: 'REST API for DEX order management',
+      createDefaultStage: false,
       corsPreflight: {
         allowOrigins: ['*'],
         allowMethods: [apigatewayv2.CorsHttpMethod.GET],
         allowHeaders: ['Content-Type', 'Authorization'],
       },
+    });
+
+    const httpStage = new apigatewayv2.HttpStage(this, 'DEXOrderManagementApiDevStage', {
+      httpApi,
+      stageName: 'dev',
+      autoDeploy: true,
     });
 
     // Add routes for order management
@@ -270,7 +277,7 @@ export class DexTraderBackendStack extends cdk.Stack {
     });
 
     new cdk.CfnOutput(this, 'RestApiUrl', {
-      value: httpApi.url!,
+      value: httpStage.url!,
       description: 'REST API URL for order management',
     });
   }
