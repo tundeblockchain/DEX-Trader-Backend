@@ -28,6 +28,19 @@ export class DexTraderBackendStack extends cdk.Stack {
       sortKey: { name: 'orderId', type: dynamodb.AttributeType.STRING },
     });
 
+    // DynamoDB Table (Trades)
+    const tradesTable = new dynamodb.Table(this, 'DEXTrades', {
+      partitionKey: { name: 'symbol', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'tradeId', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+    });
+
+    tradesTable.addGlobalSecondaryIndex({
+      indexName: 'TradesByOwnerIndex',
+      partitionKey: { name: 'owner', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'tradeId', type: dynamodb.AttributeType.STRING },
+    });
+
     // DynamoDB Table (WebSocket Connections)
     const connectionsTable = new dynamodb.Table(this, 'DEXConnections', {
       partitionKey: { name: 'connectionId', type: dynamodb.AttributeType.STRING },
@@ -102,12 +115,14 @@ export class DexTraderBackendStack extends cdk.Stack {
         TRADE_QUEUE_URL: tradeEventsQueue.queueUrl,
         CONNECTIONS_TABLE: connectionsTable.tableName,
         WEBSOCKET_ENDPOINT: websocketEndpoint,
+        TRADES_TABLE: tradesTable.tableName,
       },
     });
 
     orderBookTable.grantReadWriteData(matcherLambda);
     tradeEventsQueue.grantSendMessages(matcherLambda);
     connectionsTable.grantReadData(matcherLambda);
+    tradesTable.grantReadWriteData(matcherLambda);
 
     // Grant matcher Lambda permission to manage WebSocket connections
     matcherLambda.addToRolePolicy(
@@ -181,6 +196,19 @@ export class DexTraderBackendStack extends cdk.Stack {
     });
     orderBookTable.grantReadData(getOrdersByOwnerLambda);
 
+    // Lambda to get trades by owner
+    const getTradesByOwnerLambda = new lambda.Function(this, 'GetTradesByOwnerLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lambda/getTradesByOwner'),
+      timeout: cdk.Duration.seconds(10),
+      environment: {
+        TRADES_TABLE: tradesTable.tableName,
+        TRADES_OWNER_INDEX: 'TradesByOwnerIndex',
+      },
+    });
+    tradesTable.grantReadData(getTradesByOwnerLambda);
+
     // REST API (HTTP API) for order management
     const httpApi = new apigatewayv2.HttpApi(this, 'DEXOrderManagementApi', {
       description: 'REST API for DEX order management',
@@ -202,6 +230,12 @@ export class DexTraderBackendStack extends cdk.Stack {
       path: '/orders/owner/{owner}',
       methods: [apigatewayv2.HttpMethod.GET],
       integration: new integrations.HttpLambdaIntegration('GetOrdersByOwnerIntegration', getOrdersByOwnerLambda),
+    });
+
+    httpApi.addRoutes({
+      path: '/trades/owner/{owner}',
+      methods: [apigatewayv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration('GetTradesByOwnerIntegration', getTradesByOwnerLambda),
     });
 
     // Outputs

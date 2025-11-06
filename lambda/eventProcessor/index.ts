@@ -12,11 +12,12 @@ export const handler = async (event: any) => {
   for (const record of event.Records) {
     const trade = JSON.parse(record.body);
 
-    // Publish to SNS
+    const message = `Trade ${trade.tradeId || 'unknown'} executed: ${trade.symbol} ${trade.qty}@${trade.price}`;
+
     await sns.send(
       new PublishCommand({
         TopicArn: topicArn,
-        Message: `Trade executed: ${trade.symbol} ${trade.qty}@${trade.price}`,
+        Message: message,
       })
     );
 
@@ -33,7 +34,12 @@ export const handler = async (event: any) => {
         await mgmt.send(
           new PostToConnectionCommand({
             ConnectionId: connectionId,
-            Data: Buffer.from(JSON.stringify({ type: "TRADE", trade })),
+            Data: Buffer.from(
+              JSON.stringify({
+                type: "TRADE",
+                trade,
+              })
+            ),
           })
         );
       } catch (err) {

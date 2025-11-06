@@ -8,6 +8,7 @@ const sqs = new SQSClient({});
 const tableName = process.env.ORDERBOOK_TABLE!;
 const tradeQueueUrl = process.env.TRADE_QUEUE_URL!;
 const websocketEndpoint = process.env.WEBSOCKET_ENDPOINT!;
+const tradesTableName = process.env.TRADES_TABLE!;
 
 const createMgmtClient = () =>
   new ApiGatewayManagementApiClient({
@@ -104,6 +105,7 @@ export const handler = async (event: any) => {
 
     // Process order logic (simplified)
     const matched = Math.random() > 0.5; // logic for demo
+    let tradePayload: Record<string, any> | undefined;
 
     // Notify client of receipt
     await sendToConnection(connectionId, {
@@ -112,17 +114,52 @@ export const handler = async (event: any) => {
     });
 
     if (matched) {
+      const tradeId = randomUUID();
+      const matchedAt = new Date().toISOString();
+
+      try {
+        await ddb.send(
+          new PutItemCommand({
+            TableName: tradesTableName,
+            Item: {
+              symbol: { S: order.symbol },
+              tradeId: { S: tradeId },
+              orderId: { S: orderId },
+              owner: { S: order.owner },
+              price: { N: order.price.toString() },
+              qty: { N: order.qty.toString() },
+              side: { S: order.side || "BUY" },
+              matchedAt: { S: matchedAt },
+              createdAt: { S: timestamp },
+            },
+          })
+        );
+      } catch (err: any) {
+        console.error("Error storing trade in DynamoDB:", err);
+        await sendToConnection(connectionId, {
+          status: "ERROR",
+          message: "Failed to store trade",
+        });
+        return { statusCode: 500, body: JSON.stringify({ error: "Failed to store trade" }) };
+      }
+
+      tradePayload = {
+        tradeId,
+        orderId,
+        symbol: order.symbol,
+        price: order.price,
+        qty: order.qty,
+        owner: order.owner,
+        side: order.side || "BUY",
+        matchedAt,
+      };
+
       try {
         await sqs.send(
           new SendMessageCommand({
             QueueUrl: tradeQueueUrl,
             MessageBody: JSON.stringify({
-              tradeId: randomUUID(),
-              orderId: orderId,
-              symbol: order.symbol,
-              price: order.price,
-              qty: order.qty,
-              owner: order.owner,
+              ...tradePayload,
             }),
           })
         );
@@ -137,11 +174,17 @@ export const handler = async (event: any) => {
       }
     }
 
-    await sendToConnection(connectionId, {
-      status: "Order stored",
+    const responsePayload: Record<string, any> = {
+      status: matched ? "Order matched" : "Order stored",
       order: { ...order, orderId, timestamp },
       matched,
-    });
+    };
+
+    if (tradePayload) {
+      responsePayload.trade = tradePayload;
+    }
+
+    await sendToConnection(connectionId, responsePayload);
 
     return {
       statusCode: 200,
