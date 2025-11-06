@@ -202,6 +202,19 @@ export class DexTraderBackendStack extends cdk.Stack {
     });
     orderBookTable.grantReadData(getOrdersByOwnerLambda);
 
+    // Lambda to get open orders by owner
+    const getOpenOrdersByOwnerLambda = new lambda.Function(this, 'GetOpenOrdersByOwnerLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lambda/getOpenOrdersByOwner'),
+      timeout: cdk.Duration.seconds(10),
+      environment: {
+        ORDERBOOK_TABLE: orderBookTable.tableName,
+        OWNER_INDEX_NAME: 'OwnerIndex',
+      },
+    });
+    orderBookTable.grantReadData(getOpenOrdersByOwnerLambda);
+
     // Lambda to get trades by owner
     const getTradesByOwnerLambda = new lambda.Function(this, 'GetTradesByOwnerLambda', {
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -256,6 +269,12 @@ export class DexTraderBackendStack extends cdk.Stack {
       path: '/orders/owner/{owner}',
       methods: [apigatewayv2.HttpMethod.GET],
       integration: new integrations.HttpLambdaIntegration('GetOrdersByOwnerIntegration', getOrdersByOwnerLambda),
+    });
+
+    httpApi.addRoutes({
+      path: '/orders/owner/open/{owner}',
+      methods: [apigatewayv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration('GetOpenOrdersByOwnerIntegration', getOpenOrdersByOwnerLambda),
     });
 
     httpApi.addRoutes({
