@@ -6,6 +6,7 @@ const ddb = new DynamoDBClient({});
 const sns = new SNSClient({});
 const topicArn = process.env.NOTIFICATIONS_TOPIC_ARN!;
 const connectionsTable = process.env.CONNECTIONS_TABLE!;
+const websocketEndpoint = process.env.WEBSOCKET_ENDPOINT!;
 
 export const handler = async (event: any) => {
   for (const record of event.Records) {
@@ -21,11 +22,12 @@ export const handler = async (event: any) => {
 
     // Push to WebSocket clients
     const connections = await ddb.send(new ScanCommand({ TableName: connectionsTable }));
+    const mgmt = new ApiGatewayManagementApiClient({
+      endpoint: websocketEndpoint,
+    });
+    
     for (const item of connections.Items || []) {
       const connectionId = item.connectionId.S!;
-      const mgmt = new ApiGatewayManagementApiClient({
-        endpoint: `https://${event.requestContext?.domainName}/${event.requestContext?.stage}`,
-      });
 
       try {
         await mgmt.send(

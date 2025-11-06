@@ -12,6 +12,8 @@ export class PipelineStack extends cdk.Stack {
     const repoBranch = this.node.tryGetContext('githubBranch'); 
     const pipeline = new CodePipeline(this, 'Pipeline', {
       pipelineName: 'DEXTradingPlatformPipeline',
+      selfMutation: true,
+      crossAccountKeys: false,
       synth: new ShellStep('Synth', {
         input: CodePipelineSource.connection(`${repoOwner}/${repoName}`, repoBranch, {
             connectionArn: this.node.tryGetContext('connectionURN'),

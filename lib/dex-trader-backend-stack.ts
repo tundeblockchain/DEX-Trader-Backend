@@ -7,6 +7,7 @@ import * as sns from 'aws-cdk-lib/aws-sns';
 import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+import * as iam from 'aws-cdk-lib/aws-iam';
 
 export class DexTraderBackendStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -60,6 +61,29 @@ export class DexTraderBackendStack extends cdk.Stack {
     });
     connectionsTable.grantWriteData(disconnectLambda);
 
+    // --- WebSocket API ---
+    const websocketApi = new apigatewayv2.WebSocketApi(this, 'DEXTradingWebSocketApi', {
+      connectRouteOptions: { integration: new integrations.WebSocketLambdaIntegration('ConnectIntegration', connectLambda) },
+      disconnectRouteOptions: { integration: new integrations.WebSocketLambdaIntegration('DisconnectIntegration', disconnectLambda) },
+    });
+
+    const stage = new apigatewayv2.WebSocketStage(this, 'DevStage', {
+      webSocketApi: websocketApi,
+      stageName: 'dev',
+      autoDeploy: true,
+    });
+
+    // Get the WebSocket API management endpoint URL (for ApiGatewayManagementApiClient)
+    // Convert wss:// to https:// for the management API endpoint
+    const websocketEndpoint = cdk.Fn.join('', [
+      'https://',
+      websocketApi.apiId,
+      '.execute-api.',
+      this.region,
+      '.amazonaws.com/',
+      stage.stageName,
+    ]);
+
     // Matcher Lambda (core order matching)
     const matcherLambda = new lambda.Function(this, 'DEXMatcherLambda', {
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -69,12 +93,27 @@ export class DexTraderBackendStack extends cdk.Stack {
       environment: {
         ORDERBOOK_TABLE: orderBookTable.tableName,
         TRADE_QUEUE_URL: tradeEventsQueue.queueUrl,
+        WEBSOCKET_ENDPOINT: websocketEndpoint,
       },
     });
 
     orderBookTable.grantReadWriteData(matcherLambda);
     tradeEventsQueue.grantSendMessages(matcherLambda);
     connectionsTable.grantReadData(matcherLambda);
+
+    // Grant matcher Lambda permission to manage WebSocket connections
+    matcherLambda.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['execute-api:ManageConnections'],
+        resources: [`arn:aws:execute-api:${this.region}:${this.account}:${websocketApi.apiId}/${stage.stageName}/*/*`],
+      })
+    );
+
+    // Add default route for matcher after it's created
+    websocketApi.addRoute('$default', {
+      integration: new integrations.WebSocketLambdaIntegration('DefaultIntegration', matcherLambda),
+    });
 
     // Event Processor Lambda (consumes SQS → SNS)
     const eventProcessorLambda = new lambda.Function(this, 'DEXEventProcessorLambda', {
@@ -85,6 +124,7 @@ export class DexTraderBackendStack extends cdk.Stack {
       environment: {
         NOTIFICATIONS_TOPIC_ARN: notificationsTopic.topicArn,
         CONNECTIONS_TABLE: connectionsTable.tableName,
+        WEBSOCKET_ENDPOINT: websocketEndpoint,
       },
     });
 
@@ -92,23 +132,19 @@ export class DexTraderBackendStack extends cdk.Stack {
     notificationsTopic.grantPublish(eventProcessorLambda);
     connectionsTable.grantReadData(eventProcessorLambda);
 
+    // Grant eventProcessor Lambda permission to manage WebSocket connections
+    eventProcessorLambda.addToRolePolicy(
+      new iam.PolicyStatement({
+        effect: iam.Effect.ALLOW,
+        actions: ['execute-api:ManageConnections'],
+        resources: [`arn:aws:execute-api:${this.region}:${this.account}:${websocketApi.apiId}/${stage.stageName}/*/*`],
+      })
+    );
+
     // Allow Lambda to poll SQS
     eventProcessorLambda.addEventSourceMapping('DEXTradeQueueEventSource', {
       eventSourceArn: tradeEventsQueue.queueArn,
       batchSize: 10,
-    });
-
-    // --- WebSocket API ---
-    const websocketApi = new apigatewayv2.WebSocketApi(this, 'DEXTradingWebSocketApi', {
-      connectRouteOptions: { integration: new integrations.WebSocketLambdaIntegration('ConnectIntegration', connectLambda) },
-      disconnectRouteOptions: { integration: new integrations.WebSocketLambdaIntegration('DisconnectIntegration', disconnectLambda) },
-      defaultRouteOptions: { integration: new integrations.WebSocketLambdaIntegration('DefaultIntegration', matcherLambda) },
-    });
-
-    const stage = new apigatewayv2.WebSocketStage(this, 'DevStage', {
-      webSocketApi: websocketApi,
-      stageName: 'dev',
-      autoDeploy: true,
     });
 
     new cdk.CfnOutput(this, 'ApiUrl', {
