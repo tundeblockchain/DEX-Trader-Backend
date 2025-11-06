@@ -12,7 +12,7 @@ export const handler = async (event: any) => {
   for (const record of event.Records) {
     const trade = JSON.parse(record.body);
 
-    const message = `Trade ${trade.tradeId || 'unknown'} executed: ${trade.symbol} ${trade.qty}@${trade.price}`;
+    const message = `Trade ${trade.tradeId || 'unknown'} (${trade.type || 'unknown'}) executed: ${trade.symbol} ${trade.qty}@${trade.price}`;
 
     await sns.send(
       new PublishCommand({

@@ -54,6 +54,7 @@ export const handler = async (event: any) => {
         price: parseFloat(unmarshalled.price),
         qty: parseFloat(unmarshalled.qty),
         side: unmarshalled.side,
+        type: unmarshalled.type,
         status: unmarshalled.status,
         createdAt: unmarshalled.createdAt,
         updatedAt: unmarshalled.updatedAt,

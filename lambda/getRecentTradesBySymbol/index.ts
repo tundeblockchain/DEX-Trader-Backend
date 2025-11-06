@@ -1,10 +1,9 @@
 import { DynamoDBClient, QueryCommand } from "@aws-sdk/client-dynamodb";
 
 const ddb = new DynamoDBClient({});
-const tableName = process.env.ORDERBOOK_TABLE!;
-const ownerIndexName = process.env.OWNER_INDEX_NAME!;
+const tradesTable = process.env.TRADES_TABLE!;
+const symbolIndex = process.env.TRADES_SYMBOL_INDEX!;
 
-// Helper function to convert DynamoDB item to plain object
 const unmarshallItem = (item: any) => {
   const result: any = {};
   for (const key in item) {
@@ -20,36 +19,36 @@ const unmarshallItem = (item: any) => {
 
 export const handler = async (event: any) => {
   try {
-    // Extract owner (crypto address) from path parameters
-    const owner = event.pathParameters?.owner;
-    
-    if (!owner) {
+    const symbol = event.pathParameters?.symbol;
+
+    if (!symbol) {
       return {
         statusCode: 400,
         headers: {
           "Content-Type": "application/json",
           "Access-Control-Allow-Origin": "*",
         },
-        body: JSON.stringify({ error: "Owner parameter is required" }),
+        body: JSON.stringify({ error: "Symbol parameter is required" }),
       };
     }
 
-    // Query orders by owner using GSI
     const result = await ddb.send(
       new QueryCommand({
-        TableName: tableName,
-        IndexName: ownerIndexName,
-        KeyConditionExpression: "owner = :owner",
+        TableName: tradesTable,
+        IndexName: symbolIndex,
+        KeyConditionExpression: "symbol = :symbol",
         ExpressionAttributeValues: {
-          ":owner": { S: owner },
+          ":symbol": { S: symbol },
         },
+        ScanIndexForward: false,
+        Limit: 300,
       })
     );
 
-    // Convert DynamoDB items to plain objects
-    const orders = (result.Items || []).map((item) => {
+    const trades = (result.Items || []).map((item) => {
       const unmarshalled = unmarshallItem(item);
       return {
+        tradeId: unmarshalled.tradeId,
         orderId: unmarshalled.orderId,
         symbol: unmarshalled.symbol,
         owner: unmarshalled.owner,
@@ -57,9 +56,8 @@ export const handler = async (event: any) => {
         qty: parseFloat(unmarshalled.qty),
         side: unmarshalled.side,
         type: unmarshalled.type,
-        status: unmarshalled.status,
+        matchedAt: unmarshalled.matchedAt,
         createdAt: unmarshalled.createdAt,
-        updatedAt: unmarshalled.updatedAt,
       };
     });
 
@@ -70,13 +68,13 @@ export const handler = async (event: any) => {
         "Access-Control-Allow-Origin": "*",
       },
       body: JSON.stringify({
-        owner: owner,
-        count: orders.length,
-        orders: orders,
+        symbol,
+        count: trades.length,
+        trades,
       }),
     };
   } catch (err: any) {
-    console.error("Error retrieving orders by owner:", err);
+    console.error("Error retrieving recent trades by symbol:", err);
     return {
       statusCode: 500,
       headers: {
@@ -87,4 +85,3 @@ export const handler = async (event: any) => {
     };
   }
 };
-

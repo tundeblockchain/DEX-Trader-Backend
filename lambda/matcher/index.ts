@@ -55,12 +55,22 @@ export const handler = async (event: any) => {
     }
 
     // Validate required fields
-    if (!order.symbol || !order.price || !order.qty || !order.owner) {
+    const orderType = typeof order.type === "string" ? order.type.toLowerCase() : undefined;
+
+    if (
+      !order.symbol ||
+      !order.price ||
+      !order.qty ||
+      !order.owner ||
+      !orderType ||
+      (orderType !== "limit" && orderType !== "market")
+    ) {
       const missing = [
         !order.symbol && "symbol",
         !order.price && "price",
         !order.qty && "qty",
         !order.owner && "owner",
+        (!orderType || (orderType !== "limit" && orderType !== "market")) && "type (limit or market)",
       ].filter(Boolean);
 
       const message = `Missing required fields: ${missing.join(", ")}`;
@@ -76,6 +86,12 @@ export const handler = async (event: any) => {
     const orderId = randomUUID();
     const timestamp = new Date().toISOString();
 
+    // Determine match outcome
+    const matched = orderType === "market" ? true : Math.random() > 0.5; // placeholder logic
+    const status = matched ? "FILLED" : "PENDING";
+    const matchedAt = matched ? new Date().toISOString() : undefined;
+    const updatedAt = matched ? matchedAt! : timestamp;
+
     // Store order in DynamoDB
     try {
       await ddb.send(
@@ -88,9 +104,10 @@ export const handler = async (event: any) => {
             price: { N: order.price.toString() },
             qty: { N: order.qty.toString() },
             side: { S: order.side || "BUY" }, // BUY or SELL
-            status: { S: "PENDING" }, // PENDING, FILLED, CANCELLED
+            type: { S: orderType },
+            status: { S: status }, // PENDING, FILLED, CANCELLED
             createdAt: { S: timestamp },
-            updatedAt: { S: timestamp },
+            updatedAt: { S: updatedAt },
           },
         })
       );
@@ -103,8 +120,6 @@ export const handler = async (event: any) => {
       return { statusCode: 500, body: JSON.stringify({ error: "Failed to store order" }) };
     }
 
-    // Process order logic (simplified)
-    const matched = Math.random() > 0.5; // logic for demo
     let tradePayload: Record<string, any> | undefined;
 
     // Notify client of receipt
@@ -115,7 +130,6 @@ export const handler = async (event: any) => {
 
     if (matched) {
       const tradeId = randomUUID();
-      const matchedAt = new Date().toISOString();
 
       try {
         await ddb.send(
@@ -129,7 +143,8 @@ export const handler = async (event: any) => {
               price: { N: order.price.toString() },
               qty: { N: order.qty.toString() },
               side: { S: order.side || "BUY" },
-              matchedAt: { S: matchedAt },
+              type: { S: orderType },
+              matchedAt: { S: matchedAt! },
               createdAt: { S: timestamp },
             },
           })
@@ -151,6 +166,7 @@ export const handler = async (event: any) => {
         qty: order.qty,
         owner: order.owner,
         side: order.side || "BUY",
+        type: orderType,
         matchedAt,
       };
 
@@ -176,7 +192,7 @@ export const handler = async (event: any) => {
 
     const responsePayload: Record<string, any> = {
       status: matched ? "Order matched" : "Order stored",
-      order: { ...order, orderId, timestamp },
+      order: { ...order, orderId, timestamp, type: orderType, status },
       matched,
     };
 
@@ -191,7 +207,9 @@ export const handler = async (event: any) => {
       body: JSON.stringify({
         message: "Order Created Successfully",
         orderId: orderId,
-        order: { ...order, orderId, timestamp },
+        order: { ...order, orderId, timestamp, type: orderType, status },
+        matched,
+        trade: tradePayload,
       }),
     };
   } catch (err: any) {

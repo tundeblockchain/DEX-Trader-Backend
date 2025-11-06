@@ -41,6 +41,12 @@ export class DexTraderBackendStack extends cdk.Stack {
       sortKey: { name: 'tradeId', type: dynamodb.AttributeType.STRING },
     });
 
+    tradesTable.addGlobalSecondaryIndex({
+      indexName: 'TradesBySymbolTimestampIndex',
+      partitionKey: { name: 'symbol', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'matchedAt', type: dynamodb.AttributeType.STRING },
+    });
+
     // DynamoDB Table (WebSocket Connections)
     const connectionsTable = new dynamodb.Table(this, 'DEXConnections', {
       partitionKey: { name: 'connectionId', type: dynamodb.AttributeType.STRING },
@@ -209,6 +215,19 @@ export class DexTraderBackendStack extends cdk.Stack {
     });
     tradesTable.grantReadData(getTradesByOwnerLambda);
 
+    // Lambda to get recent trades by symbol
+    const getRecentTradesBySymbolLambda = new lambda.Function(this, 'GetRecentTradesBySymbolLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lambda/getRecentTradesBySymbol'),
+      timeout: cdk.Duration.seconds(10),
+      environment: {
+        TRADES_TABLE: tradesTable.tableName,
+        TRADES_SYMBOL_INDEX: 'TradesBySymbolTimestampIndex',
+      },
+    });
+    tradesTable.grantReadData(getRecentTradesBySymbolLambda);
+
     // REST API (HTTP API) for order management
     const httpApi = new apigatewayv2.HttpApi(this, 'DEXOrderManagementApi', {
       description: 'REST API for DEX order management',
@@ -236,6 +255,12 @@ export class DexTraderBackendStack extends cdk.Stack {
       path: '/trades/owner/{owner}',
       methods: [apigatewayv2.HttpMethod.GET],
       integration: new integrations.HttpLambdaIntegration('GetTradesByOwnerIntegration', getTradesByOwnerLambda),
+    });
+
+    httpApi.addRoutes({
+      path: '/trades/symbol/{symbol}/recent',
+      methods: [apigatewayv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration('GetRecentTradesBySymbolIntegration', getRecentTradesBySymbolLambda),
     });
 
     // Outputs
