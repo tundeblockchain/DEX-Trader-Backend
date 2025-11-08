@@ -8,7 +8,8 @@ import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as apigatewayv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as iam from 'aws-cdk-lib/aws-iam';
-import * as scheduler from 'aws-cdk-lib/aws-scheduler';
+import * as events from 'aws-cdk-lib/aws-events';
+import * as targets from 'aws-cdk-lib/aws-events-targets';
 
 export class DexTraderBackendStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -209,22 +210,16 @@ export class DexTraderBackendStack extends cdk.Stack {
       })
     );
 
-    const priceFeedRefreshSeconds =
-      Number(this.node.tryGetContext('priceFeedRefreshIntervalSeconds')) || 30;
+    const priceFeedRefreshSecondsInput =
+      Number(this.node.tryGetContext('priceFeedRefreshIntervalSeconds')) || 60;
+    const priceFeedRefreshMinutes = Math.max(
+      Math.ceil(priceFeedRefreshSecondsInput / 60),
+      1
+    );
 
-    const schedulerRole = new iam.Role(this, 'DEXPriceFeedSchedulerRole', {
-      assumedBy: new iam.ServicePrincipal('scheduler.amazonaws.com'),
-    });
-    priceFeedLambda.grantInvoke(schedulerRole);
-
-    new scheduler.CfnSchedule(this, 'DEXPriceFeedScheduler', {
-      flexibleTimeWindow: { mode: 'OFF' },
-      scheduleExpression: `rate(${priceFeedRefreshSeconds} seconds)`,
-      target: {
-        arn: priceFeedLambda.functionArn,
-        roleArn: schedulerRole.roleArn,
-        input: JSON.stringify({}),
-      },
+    new events.Rule(this, 'DEXPriceFeedScheduleRule', {
+      schedule: events.Schedule.rate(cdk.Duration.minutes(priceFeedRefreshMinutes)),
+      targets: [new targets.LambdaFunction(priceFeedLambda)],
     });
 
     // Order Management Lambdas
