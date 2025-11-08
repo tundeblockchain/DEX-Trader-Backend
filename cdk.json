@@ -84,14 +84,17 @@
     "connectionURN": "arn:aws:codeconnections:eu-west-2:667167472868:connection/39ab0280-0a40-459b-a945-48ba7b3805d3",
     "binanceBaseUrl": "https://api.binance.com/api/v3",
     "binanceSymbolOverrides": {
-      "BTCUSDT": "BTCUSDT",
-      "ETHUSDT": "ETHUSDT",
-      "SOLUSDT": "SOLUSDT",
-      "XRPUSDT": "XRPUSDT",
-      "DOGEUSDT": "DOGEUSDT",
-      "ADAUSDT": "ADAUSDT",
-      "DOTUSDT": "DOTUSDT",
-      "LINKUSDT": "LINKUSDT"
+      "BTC": "BTCUSDT",
+      "ETH": "ETHUSDT",
+      "SOL": "SOLUSDT",
+      "AVAX": "AVAXUSDT",
+      "BNB": "BNBUSDT",
+      "DOGE": "DOGEUSDT",
+      "SUI": "SUIUSDT",
+      "LINK": "LINKUSDT",
+      "XRP": "XRPUSDT",
+      "ADA": "ADAUSDT",
+      "DOT": "DOTUSDT"
     }
   }
 }
