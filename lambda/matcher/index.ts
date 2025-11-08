@@ -37,6 +37,12 @@ const sendToConnection = async (connectionId: string, payload: any) => {
   }
 };
 
+const sendOrderMessage = async (connectionId: string, payload: Record<string, any>) =>
+  sendToConnection(connectionId, {
+    channel: "orders",
+    ...payload,
+  });
+
 export const handler = async (event: any) => {
   try {
     const { connectionId } = event.requestContext;
@@ -47,7 +53,8 @@ export const handler = async (event: any) => {
       console.log("Received order payload:", order);
     } catch (err) {
       console.error("Bad JSON:", err);
-      await sendToConnection(connectionId, {
+      await sendOrderMessage(connectionId, {
+        type: "ORDER_ERROR",
         status: "ERROR",
         message: "Invalid order format",
       });
@@ -74,7 +81,8 @@ export const handler = async (event: any) => {
       ].filter(Boolean);
 
       const message = `Missing required fields: ${missing.join(", ")}`;
-      await sendToConnection(connectionId, {
+      await sendOrderMessage(connectionId, {
+        type: "ORDER_ERROR",
         status: "ERROR",
         message,
       });
@@ -123,7 +131,8 @@ export const handler = async (event: any) => {
     let tradePayload: Record<string, any> | undefined;
 
     // Notify client of receipt
-    await sendToConnection(connectionId, {
+    await sendOrderMessage(connectionId, {
+      type: "ORDER_RECEIVED",
       status: "Order received",
       order: { ...order, orderId, timestamp },
     });
@@ -151,7 +160,8 @@ export const handler = async (event: any) => {
         );
       } catch (err: any) {
         console.error("Error storing trade in DynamoDB:", err);
-        await sendToConnection(connectionId, {
+        await sendOrderMessage(connectionId, {
+          type: "ORDER_ERROR",
           status: "ERROR",
           message: "Failed to store trade",
         });
@@ -181,7 +191,8 @@ export const handler = async (event: any) => {
         );
       } catch (err: any) {
         console.error("Error sending message to SQS:", err);
-        await sendToConnection(connectionId, {
+        await sendOrderMessage(connectionId, {
+          type: "ORDER_ERROR",
           status: "ERROR",
           message: "Failed to process trade",
         });
@@ -200,7 +211,10 @@ export const handler = async (event: any) => {
       responsePayload.trade = tradePayload;
     }
 
-    await sendToConnection(connectionId, responsePayload);
+    await sendOrderMessage(connectionId, {
+      type: matched ? "ORDER_MATCHED" : "ORDER_STORED",
+      ...responsePayload,
+    });
 
     return {
       statusCode: 200,
@@ -215,7 +229,8 @@ export const handler = async (event: any) => {
   } catch (err: any) {
     console.error("Unexpected error in matcher handler:", err);
     const connectionId = event?.requestContext?.connectionId;
-    await sendToConnection(connectionId, {
+    await sendOrderMessage(connectionId ?? "", {
+      type: "ORDER_ERROR",
       status: "ERROR",
       message: "Internal server error",
     });

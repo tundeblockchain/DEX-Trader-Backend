@@ -20,6 +20,7 @@ type MarketData = {
 
 type PriceMessage = {
   type: "PRICE";
+  channel: "prices";
   symbol: string;
   price: number;
   decimals: number;
@@ -254,6 +255,7 @@ export const handler = async () => {
         const result = buildMarketData(symbol, config, payload);
         priceMessages.push({
           type: "PRICE",
+          channel: "prices",
           symbol: result.symbol,
           price: result.price,
           decimals: result.decimals,

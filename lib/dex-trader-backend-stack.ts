@@ -235,6 +235,30 @@ export class DexTraderBackendStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(priceFeedLambda)],
     });
 
+    const getLatestPricesLambda = new lambda.Function(this, 'DEXGetLatestPricesLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lambda/getLatestPrices', {
+        bundling: {
+          image: lambda.Runtime.NODEJS_20_X.bundlingImage,
+          command: [
+            'bash',
+            '-c',
+            [
+              'npm install',
+              'npm prune --omit=dev',
+              'cp -R . /asset-output',
+            ].join(' && '),
+          ],
+        },
+      }),
+      timeout: cdk.Duration.seconds(10),
+      environment: {
+        BINANCE_BASE_URL: binanceBaseUrl,
+        BINANCE_SYMBOL_MAP: JSON.stringify(binanceSymbolOverrides),
+      },
+    });
+
     // Order Management Lambdas
     // Lambda to get orders by symbol
     const getOrdersBySymbolLambda = new lambda.Function(this, 'GetOrdersBySymbolLambda', {
@@ -346,6 +370,12 @@ export class DexTraderBackendStack extends cdk.Stack {
       path: '/trades/symbol/{symbol}/recent',
       methods: [apigatewayv2.HttpMethod.GET],
       integration: new integrations.HttpLambdaIntegration('GetRecentTradesBySymbolIntegration', getRecentTradesBySymbolLambda),
+    });
+
+    httpApi.addRoutes({
+      path: '/prices/latest',
+      methods: [apigatewayv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration('GetLatestPricesIntegration', getLatestPricesLambda),
     });
 
     // Outputs

@@ -41,6 +41,7 @@ The Lambda emits WebSocket messages of the form:
 ```json
 {
   "type": "PRICE",
+  "channel": "prices",
   "symbol": "BTC",
   "price": 69123.45,
   "decimals": 2,
@@ -60,6 +61,25 @@ The Lambda emits WebSocket messages of the form:
   }
 }
 ```
+
+Your React client can subscribe to the existing WebSocket endpoint and filter on `channel` to target specific updates.
+
+### WebSocket Channels
+
+All WebSocket payloads now include a `channel` field:
+
+- `prices`: Real-time price messages from `DEXPriceFeedLambda`.
+- `trades`: Trade execution notices emitted by `DEXEventProcessorLambda`.
+- `orders`: Order acknowledgements, status changes, and errors from the matcher Lambda.
+
+### REST Endpoints
+
+The HTTP API exposes additional endpoints, including:
+
+- `GET /prices/latest` — Returns the latest Binance prices (and 24h metrics) for all configured symbols.
+- `GET /orders/symbol/{symbol}`, `GET /orders/owner/{owner}`, `GET /orders/owner/open/{owner}` — Order queries.
+- `GET /trades/owner/{owner}`, `GET /trades/symbol/{symbol}/recent` — Trade queries.
+
 ## GitHub Webhook Setup
 
 After deploying the pipeline, you need to ensure the GitHub webhook is created:

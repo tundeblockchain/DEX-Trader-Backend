@@ -37,6 +37,7 @@ export const handler = async (event: any) => {
             Data: Buffer.from(
               JSON.stringify({
                 type: "TRADE",
+                channel: "trades",
                 trade,
               })
             ),
