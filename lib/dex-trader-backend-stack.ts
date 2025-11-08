@@ -191,7 +191,20 @@ export class DexTraderBackendStack extends cdk.Stack {
     const priceFeedLambda = new lambda.Function(this, 'DEXPriceFeedLambda', {
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'index.handler',
-      code: lambda.Code.fromAsset('lambda/priceFeed'),
+      code: lambda.Code.fromAsset('lambda/priceFeed', {
+        bundling: {
+          image: lambda.Runtime.NODEJS_20_X.bundlingImage,
+          command: [
+            'bash',
+            '-c',
+            [
+              'npm install',
+              'npm prune --omit=dev',
+              'cp -R . /asset-output',
+            ].join(' && '),
+          ],
+        },
+      }),
       timeout: cdk.Duration.seconds(10),
       environment: {
         CONNECTIONS_TABLE: connectionsTable.tableName,
