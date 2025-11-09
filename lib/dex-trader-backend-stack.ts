@@ -324,6 +324,17 @@ export class DexTraderBackendStack extends cdk.Stack {
     });
     tradesTable.grantReadData(getRecentTradesBySymbolLambda);
 
+    const getCandlesticksLambda = new lambda.Function(this, 'GetCandlesticksLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lambda/getCandlesticks'),
+      timeout: cdk.Duration.seconds(10),
+      environment: {
+        BINANCE_BASE_URL: binanceBaseUrl,
+        BINANCE_SYMBOL_MAP: JSON.stringify(binanceSymbolOverrides),
+      },
+    });
+
     // REST API (HTTP API) for order management
     const httpApi = new apigatewayv2.HttpApi(this, 'DEXOrderManagementApi', {
       description: 'REST API for DEX order management',
@@ -370,6 +381,12 @@ export class DexTraderBackendStack extends cdk.Stack {
       path: '/trades/symbol/{symbol}/recent',
       methods: [apigatewayv2.HttpMethod.GET],
       integration: new integrations.HttpLambdaIntegration('GetRecentTradesBySymbolIntegration', getRecentTradesBySymbolLambda),
+    });
+
+    httpApi.addRoutes({
+      path: '/charts/candles/{symbol}',
+      methods: [apigatewayv2.HttpMethod.GET],
+      integration: new integrations.HttpLambdaIntegration('GetCandlesticksIntegration', getCandlesticksLambda),
     });
 
     httpApi.addRoutes({
