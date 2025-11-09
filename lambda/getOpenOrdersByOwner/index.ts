@@ -39,12 +39,13 @@ export const handler = async (event: any) => {
         KeyConditionExpression: "#owner = :owner",
         ExpressionAttributeNames: {
           "#owner": "owner",
+          "#status": "status",
         },
         ExpressionAttributeValues: {
           ":owner": { S: owner },
           ":pending": { S: "PENDING" },
         },
-        FilterExpression: "status = :pending",
+        FilterExpression: "#status = :pending",
       })
     );
 
