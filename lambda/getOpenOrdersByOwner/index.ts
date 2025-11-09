@@ -36,7 +36,10 @@ export const handler = async (event: any) => {
       new QueryCommand({
         TableName: tableName,
         IndexName: ownerIndexName,
-        KeyConditionExpression: "owner = :owner",
+        KeyConditionExpression: "#owner = :owner",
+        ExpressionAttributeNames: {
+          "#owner": "owner",
+        },
         ExpressionAttributeValues: {
           ":owner": { S: owner },
           ":pending": { S: "PENDING" },
