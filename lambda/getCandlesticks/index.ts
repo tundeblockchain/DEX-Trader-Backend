@@ -1,5 +1,3 @@
-import type { APIGatewayProxyEventV2 } from "aws-lambda";
-
 type SymbolConfig = {
   symbol: string;
 };
@@ -84,11 +82,12 @@ const toBinanceSymbol = (symbol: string) => {
   };
 };
 
-const clampLimit = (input: number | undefined) => {
+const clampLimit = (input?: number) => {
   if (!Number.isFinite(input)) {
     return 500;
   }
-  return Math.min(1000, Math.max(10, Math.floor(input)));
+  const value = input as number;
+  return Math.min(1000, Math.max(10, Math.floor(value)));
 };
 
 const isValidInterval = (interval: string) => {
@@ -136,7 +135,12 @@ const mapCandle = (payload: any[]) => ({
   takerBuyQuoteAssetVolume: Number(payload[10]),
 });
 
-export const handler = async (event: APIGatewayProxyEventV2) => {
+type HttpEvent = {
+  pathParameters?: Record<string, string | undefined>;
+  queryStringParameters?: Record<string, string | undefined>;
+};
+
+export const handler = async (event: HttpEvent) => {
   try {
     const symbol = event.pathParameters?.symbol;
     if (!symbol) {
