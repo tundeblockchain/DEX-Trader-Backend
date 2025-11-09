@@ -330,7 +330,7 @@ export class DexTraderBackendStack extends cdk.Stack {
       createDefaultStage: false,
       corsPreflight: {
         allowOrigins: ['*'],
-        allowMethods: [apigatewayv2.CorsHttpMethod.GET],
+        allowMethods: [apigatewayv2.CorsHttpMethod.GET, apigatewayv2.CorsHttpMethod.POST],
         allowHeaders: ['Content-Type', 'Authorization'],
       },
     });
@@ -376,6 +376,41 @@ export class DexTraderBackendStack extends cdk.Stack {
       path: '/prices/latest',
       methods: [apigatewayv2.HttpMethod.GET],
       integration: new integrations.HttpLambdaIntegration('GetLatestPricesIntegration', getLatestPricesLambda),
+    });
+
+    const generateMockDataLambda = new lambda.Function(this, 'DEXGenerateMockDataLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lambda/generateMockData', {
+        bundling: {
+          image: lambda.Runtime.NODEJS_20_X.bundlingImage,
+          command: [
+            'bash',
+            '-c',
+            [
+              'npm install',
+              'npm prune --omit=dev',
+              'cp -R . /asset-output',
+            ].join(' && '),
+          ],
+        },
+      }),
+      timeout: cdk.Duration.seconds(15),
+      environment: {
+        ORDERBOOK_TABLE: orderBookTable.tableName,
+        TRADES_TABLE: tradesTable.tableName,
+        BINANCE_BASE_URL: binanceBaseUrl,
+        BINANCE_SYMBOL_MAP: JSON.stringify(binanceSymbolOverrides),
+      },
+    });
+
+    orderBookTable.grantReadWriteData(generateMockDataLambda);
+    tradesTable.grantReadWriteData(generateMockDataLambda);
+
+    httpApi.addRoutes({
+      path: '/mock/orders',
+      methods: [apigatewayv2.HttpMethod.POST],
+      integration: new integrations.HttpLambdaIntegration('GenerateMockOrdersIntegration', generateMockDataLambda),
     });
 
     // Outputs
