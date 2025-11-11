@@ -1,7 +1,10 @@
-import { DynamoDBClient, PutItemCommand } from "@aws-sdk/client-dynamodb";
+import { DynamoDBClient, PutItemCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { ApiGatewayManagementApiClient, PostToConnectionCommand } from "@aws-sdk/client-apigatewaymanagementapi";
+import { ethers } from "ethers";
+import type { TransactionReceipt } from "ethers";
 import { randomUUID } from "crypto";
+import settlementArtifact from "../shared/abi/Settlement.json";
 
 const ddb = new DynamoDBClient({});
 const sqs = new SQSClient({});
@@ -9,6 +12,131 @@ const tableName = process.env.ORDERBOOK_TABLE!;
 const tradeQueueUrl = process.env.TRADE_QUEUE_URL!;
 const websocketEndpoint = process.env.WEBSOCKET_ENDPOINT!;
 const tradesTableName = process.env.TRADES_TABLE!;
+
+const requireEnv = (key: string) => {
+  const value = process.env[key];
+  if (!value) {
+    throw new Error(`Missing required environment variable: ${key}`);
+  }
+  return value;
+};
+
+const avaxRpcUrl = requireEnv("AVAX_RPC_URL");
+const settlementContractAddress = requireEnv("SETTLEMENT_CONTRACT_ADDRESS");
+const settlementSignerKey = requireEnv("SETTLEMENT_SIGNER_KEY");
+const opposingWalletAddress = requireEnv("OPPOSING_WALLET_ADDRESS");
+const settlementConfirmations = Number(process.env.SETTLEMENT_CONFIRMATIONS ?? "1");
+
+const provider = new ethers.JsonRpcProvider(avaxRpcUrl);
+const signer = new ethers.Wallet(settlementSignerKey, provider);
+const settlementContract = new ethers.Contract(
+  settlementContractAddress,
+  settlementArtifact.abi,
+  signer
+);
+
+const supportedPairSeparators = ["/", "-", "_"] as const;
+
+const assetMeta = [
+  { symbol: "USDT", decimals: 6 },
+  { symbol: "BTC", decimals: 8 },
+  { symbol: "ETH", decimals: 18 },
+  { symbol: "SOL", decimals: 9 },
+  { symbol: "AVAX", decimals: 18 },
+  { symbol: "LINK", decimals: 18 },
+  { symbol: "DOGE", decimals: 8 },
+  { symbol: "SUI", decimals: 9 },
+] as const;
+
+type AssetSymbol = (typeof assetMeta)[number]["symbol"];
+
+const assetDecimals = assetMeta.reduce<Record<string, number>>((acc, { symbol, decimals }) => {
+  acc[symbol] = decimals;
+  return acc;
+}, {});
+
+const assetIds = assetMeta.reduce<Record<string, string>>((acc, { symbol }) => {
+  acc[symbol] = ethers.id(symbol);
+  return acc;
+}, {});
+
+const normalizeSymbol = (symbol: string): AssetSymbol => {
+  const normalized = symbol.trim().toUpperCase();
+  if (!(normalized in assetDecimals)) {
+    throw new Error(`Unsupported asset symbol: ${normalized}`);
+  }
+  return normalized as AssetSymbol;
+};
+
+const parseTradingPair = (pair: string): [AssetSymbol, AssetSymbol] => {
+  for (const separator of supportedPairSeparators) {
+    if (pair.includes(separator)) {
+      const [base, quote] = pair.split(separator);
+      if (!base || !quote) {
+        break;
+      }
+      return [normalizeSymbol(base), normalizeSymbol(quote)];
+    }
+  }
+  throw new Error(`Unable to parse trading pair symbol: ${pair}`);
+};
+
+const toBigInt = (value: number | string, decimals: number): bigint =>
+  ethers.parseUnits(
+    typeof value === "number" ? value.toString() : value,
+    decimals
+  );
+
+const calculateBalanceUpdates = (order: any) => {
+  const [baseSymbol, quoteSymbol] = parseTradingPair(order.symbol);
+  const baseDecimals = assetDecimals[baseSymbol];
+  const quoteDecimals = assetDecimals[quoteSymbol];
+
+  const side = (order.side || "BUY").toString().toUpperCase();
+  const isBuy = side !== "SELL";
+
+  const baseAmount: bigint = toBigInt(order.qty, baseDecimals);
+  const priceAmount: bigint = toBigInt(order.price, quoteDecimals);
+  const baseScale: bigint = 10n ** BigInt(baseDecimals);
+  const quoteAmount: bigint = (baseAmount * priceAmount) / baseScale;
+
+  const buyerAddress = isBuy ? order.owner : opposingWalletAddress;
+  const sellerAddress = isBuy ? opposingWalletAddress : order.owner;
+
+  const buyerBalanceUpdates = [
+    {
+      account: buyerAddress,
+      assetId: assetIds[quoteSymbol],
+      amount: (isBuy ? -quoteAmount : quoteAmount).toString(),
+    },
+    {
+      account: buyerAddress,
+      assetId: assetIds[baseSymbol],
+      amount: (isBuy ? baseAmount : -baseAmount).toString(),
+    },
+  ];
+
+  const sellerBalanceUpdates = [
+    {
+      account: sellerAddress,
+      assetId: assetIds[quoteSymbol],
+      amount: (isBuy ? quoteAmount : -quoteAmount).toString(),
+    },
+    {
+      account: sellerAddress,
+      assetId: assetIds[baseSymbol],
+      amount: (isBuy ? -baseAmount : baseAmount).toString(),
+    },
+  ];
+
+  return {
+    balanceUpdates: [...buyerBalanceUpdates, ...sellerBalanceUpdates],
+    baseSymbol,
+    quoteSymbol,
+    baseAmount,
+    quoteAmount,
+  };
+};
 
 const createMgmtClient = () =>
   new ApiGatewayManagementApiClient({
@@ -168,6 +296,71 @@ export const handler = async (event: any) => {
         return { statusCode: 500, body: JSON.stringify({ error: "Failed to store trade" }) };
       }
 
+      let settlementComputation: ReturnType<typeof calculateBalanceUpdates>;
+      try {
+        settlementComputation = calculateBalanceUpdates(order);
+      } catch (err: any) {
+        console.error("Error computing settlement balances:", err);
+        await sendOrderMessage(connectionId, {
+          type: "ORDER_ERROR",
+          status: "ERROR",
+          message: err?.message ?? "Failed to compute settlement balances",
+        });
+        return { statusCode: 400, body: JSON.stringify({ error: err?.message ?? "Invalid settlement parameters" }) };
+      }
+
+      const tradeHash = ethers.id(tradeId);
+      let settlementReceipt: TransactionReceipt | undefined;
+
+      try {
+        const tx = await settlementContract.settleBatch(tradeHash, settlementComputation.balanceUpdates);
+        const receipt = await tx.wait(Math.max(1, settlementConfirmations));
+        console.log("Settlement transaction mined:", receipt.hash);
+        settlementReceipt = receipt;
+      } catch (err: any) {
+        console.error("Error settling trade on chain:", err);
+        await sendOrderMessage(connectionId, {
+          type: "ORDER_ERROR",
+          status: "ERROR",
+          message: "Failed to settle trade on-chain",
+        });
+        return { statusCode: 502, body: JSON.stringify({ error: "Failed to settle trade on-chain" }) };
+      }
+
+      if (settlementReceipt) {
+        try {
+          await ddb.send(
+            new UpdateItemCommand({
+              TableName: tradesTableName,
+              Key: {
+                symbol: { S: order.symbol },
+                tradeId: { S: tradeId },
+              },
+              UpdateExpression: "SET settlementTxHash = :txHash, settlementBlockNumber = :blockNumber",
+              ExpressionAttributeValues: {
+                ":txHash": { S: settlementReceipt.hash },
+                ":blockNumber": { N: settlementReceipt.blockNumber?.toString() ?? "0" },
+              },
+            })
+          );
+        } catch (err: any) {
+          console.warn("Failed to update trade with settlement details:", err);
+        }
+      }
+
+      const settlementSummary = settlementReceipt
+        ? {
+            tradeHash,
+            txHash: settlementReceipt.hash,
+            blockNumber: settlementReceipt.blockNumber?.toString() ?? null,
+            gasUsed: settlementReceipt.gasUsed?.toString() ?? null,
+            gasPrice:
+              "gasPrice" in settlementReceipt && settlementReceipt.gasPrice
+                ? settlementReceipt.gasPrice.toString()
+                : null,
+          }
+        : undefined;
+
       tradePayload = {
         tradeId,
         orderId,
@@ -178,6 +371,8 @@ export const handler = async (event: any) => {
         side: order.side || "BUY",
         type: orderType,
         matchedAt,
+        settlement: settlementSummary,
+        balanceUpdates: settlementComputation.balanceUpdates,
       };
 
       try {

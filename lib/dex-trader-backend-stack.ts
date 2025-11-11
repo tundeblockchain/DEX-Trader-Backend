@@ -10,6 +10,8 @@ import * as integrations from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
+import * as secretsmanager from 'aws-cdk-lib/aws-secretsmanager';
 
 export class DexTraderBackendStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -71,6 +73,58 @@ export class DexTraderBackendStack extends cdk.Stack {
       new subscriptions.EmailSubscription(notificationEmail)
     );
 
+    const settlementContext = this.node.tryGetContext('settlement');
+    if (!settlementContext) {
+      throw new Error('Context value "settlement" must be provided');
+    }
+
+    const {
+      avaxRpcUrl,
+      contractAddress,
+      matcherSignerKeySecretArn,
+      opposingWalletAddressParamName,
+      matcherConfirmations,
+      adminPrivateKeySecretArn,
+      adminAddressParamName,
+      adminConfirmations,
+    } = settlementContext;
+
+    if (!avaxRpcUrl || !contractAddress) {
+      throw new Error('Context "settlement" must include avaxRpcUrl and contractAddress');
+    }
+
+    if (!matcherSignerKeySecretArn || !opposingWalletAddressParamName) {
+      throw new Error('Context "settlement" must include matcherSignerKeySecretArn and opposingWalletAddressParamName');
+    }
+
+    if (!adminPrivateKeySecretArn || !adminAddressParamName) {
+      throw new Error('Context "settlement" must include adminPrivateKeySecretArn and adminAddressParamName');
+    }
+
+    const matcherSignerKeySecret = secretsmanager.Secret.fromSecretCompleteArn(
+      this,
+      'MatcherSignerKeySecret',
+      matcherSignerKeySecretArn,
+    );
+
+    const opposingWalletAddressParam = ssm.StringParameter.fromStringParameterName(
+      this,
+      'OpposingWalletAddressParam',
+      opposingWalletAddressParamName,
+    );
+
+    const adminAddressParam = ssm.StringParameter.fromStringParameterName(
+      this,
+      'AdminAddressParam',
+      adminAddressParamName,
+    );
+
+    const adminPrivateKeySecret = secretsmanager.Secret.fromSecretCompleteArn(
+      this,
+      'AdminPrivateKeySecret',
+      adminPrivateKeySecretArn,
+    );
+
     // Lambda for managing WebSocket connections
     const connectLambda = new lambda.Function(this, 'ConnectHandler', {
       runtime: lambda.Runtime.NODEJS_20_X,
@@ -124,6 +178,11 @@ export class DexTraderBackendStack extends cdk.Stack {
         CONNECTIONS_TABLE: connectionsTable.tableName,
         WEBSOCKET_ENDPOINT: websocketEndpoint,
         TRADES_TABLE: tradesTable.tableName,
+        AVAX_RPC_URL: avaxRpcUrl,
+        SETTLEMENT_CONTRACT_ADDRESS: contractAddress,
+        SETTLEMENT_SIGNER_KEY: matcherSignerKeySecret.secretValue.unsafeUnwrap(),
+        OPPOSING_WALLET_ADDRESS: opposingWalletAddressParam.stringValue,
+        SETTLEMENT_CONFIRMATIONS: (matcherConfirmations ?? 1).toString(),
       },
     });
 
@@ -393,6 +452,26 @@ export class DexTraderBackendStack extends cdk.Stack {
       path: '/prices/latest',
       methods: [apigatewayv2.HttpMethod.GET],
       integration: new integrations.HttpLambdaIntegration('GetLatestPricesIntegration', getLatestPricesLambda),
+    });
+
+    const assetAdminLambda = new lambda.Function(this, 'DEXAssetAdminLambda', {
+      runtime: lambda.Runtime.NODEJS_20_X,
+      handler: 'index.handler',
+      code: lambda.Code.fromAsset('lambda/assetAdmin'),
+      timeout: cdk.Duration.seconds(10),
+      environment: {
+        AVAX_RPC_URL: avaxRpcUrl,
+        SETTLEMENT_CONTRACT_ADDRESS: contractAddress,
+        SETTLEMENT_ADMIN_PRIVATE_KEY: adminPrivateKeySecret.secretValue.unsafeUnwrap(),
+        SETTLEMENT_ADMIN_ADDRESS: adminAddressParam.stringValue,
+        SETTLEMENT_ADMIN_CONFIRMATIONS: (adminConfirmations ?? 1).toString(),
+      },
+    });
+
+    httpApi.addRoutes({
+      path: '/admin/assets',
+      methods: [apigatewayv2.HttpMethod.POST],
+      integration: new integrations.HttpLambdaIntegration('AssetAdminIntegration', assetAdminLambda),
     });
 
     const generateMockDataLambda = new lambda.Function(this, 'DEXGenerateMockDataLambda', {

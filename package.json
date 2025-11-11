@@ -24,6 +24,7 @@
     "@aws-sdk/client-dynamodb": "^3.922.0",
     "@aws-sdk/client-sns": "^3.922.0",
     "@aws-sdk/client-sqs": "^3.922.0",
+    "ethers": "^6.13.4",
     "aws-cdk-lib": "2.172.0",
     "axios": "^1.13.2",
     "constructs": "^10.0.0",
