@@ -5,7 +5,7 @@ import { ethers } from "ethers";
 import type { TransactionReceipt } from "ethers";
 import { randomUUID } from "crypto";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const settlementArtifact: { abi: any[] } = require("./shared/abi/Settlement.json");
+const settlementArtifact: { abi: any[] } = require("./Settlement.json");
 
 const ddb = new DynamoDBClient({});
 const sqs = new SQSClient({});

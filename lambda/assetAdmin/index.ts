@@ -1,6 +1,6 @@
 import { ethers } from "ethers";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
-const settlementArtifact: { abi: any[] } = require("./shared/abi/Settlement.json");
+const settlementArtifact: { abi: any[] } = require("./Settlement.json");
 
 type SupportedAction = "register" | "unregister";
 
