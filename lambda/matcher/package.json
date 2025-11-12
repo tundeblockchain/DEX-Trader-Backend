@@ -1,0 +1,12 @@
+{
+  "name": "matcher",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "ethers": "^6.13.4"
+  },
+  "devDependencies": {
+    "esbuild": "^0.24.0"
+  }
+}
+

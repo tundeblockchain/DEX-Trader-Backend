@@ -170,7 +170,23 @@ export class DexTraderBackendStack extends cdk.Stack {
     const matcherLambda = new lambda.Function(this, 'DEXMatcherLambda', {
       runtime: lambda.Runtime.NODEJS_20_X,
       handler: 'index.handler',
-      code: lambda.Code.fromAsset('lambda/matcher'),
+      code: lambda.Code.fromAsset('lambda/matcher', {
+        bundling: {
+          image: lambda.Runtime.NODEJS_20_X.bundlingImage,
+          command: [
+            'bash',
+            '-c',
+            [
+              'npm install',
+              'npx esbuild index.ts --bundle --platform=node --target=node20 --outfile=index.js',
+              'npm prune --omit=dev',
+              'mkdir -p shared',
+              'cp -R ../shared/* shared/ || true',
+              'cp -R . /asset-output',
+            ].join(' && '),
+          ],
+        },
+      }),
       timeout: cdk.Duration.seconds(10),
       environment: {
         ORDERBOOK_TABLE: orderBookTable.tableName,
@@ -466,6 +482,8 @@ export class DexTraderBackendStack extends cdk.Stack {
             [
               'npm install',
               'npm prune --omit=dev',
+              'mkdir -p shared',
+              'cp -R ../shared/* shared/ || true',
               'cp -R . /asset-output',
             ].join(' && '),
           ],
