@@ -95,6 +95,7 @@ export const handler = async (event: any): Promise<HttpResponse> => {
     }
 
     const { assetId, normalizedSymbol } = toAssetId(payload.symbol);
+    const minConfirmations = Math.max(1, Number.isFinite(confirmations) ? confirmations : 1);
     let txReceipt: ethers.TransactionReceipt;
 
     if (action === "register") {
@@ -103,7 +104,7 @@ export const handler = async (event: any): Promise<HttpResponse> => {
       }
 
       const tx = await contract.registerAsset(assetId, payload.tokenAddress);
-      txReceipt = await tx.wait(Math.max(1, confirmations));
+      txReceipt = await tx.wait(minConfirmations);
 
       return response(200, {
         status: "registered",
@@ -115,7 +116,7 @@ export const handler = async (event: any): Promise<HttpResponse> => {
     }
 
     const tx = await contract.unregisterAsset(assetId);
-    txReceipt = await tx.wait(Math.max(1, confirmations));
+    txReceipt = await tx.wait(minConfirmations);
 
     return response(200, {
       status: "unregistered",
