@@ -1,6 +1,7 @@
 import { DynamoDBClient, PutItemCommand, UpdateItemCommand } from "@aws-sdk/client-dynamodb";
 import { SQSClient, SendMessageCommand } from "@aws-sdk/client-sqs";
 import { ApiGatewayManagementApiClient, PostToConnectionCommand } from "@aws-sdk/client-apigatewaymanagementapi";
+import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import { ethers } from "ethers";
 import type { TransactionReceipt } from "ethers";
 import { randomUUID } from "crypto";
@@ -9,6 +10,7 @@ const settlementArtifact: { abi: any[] } = require("./abi/Settlement.json");
 
 const ddb = new DynamoDBClient({});
 const sqs = new SQSClient({});
+const secretsClient = new SecretsManagerClient({});
 const tableName = process.env.ORDERBOOK_TABLE!;
 const tradeQueueUrl = process.env.TRADE_QUEUE_URL!;
 const websocketEndpoint = process.env.WEBSOCKET_ENDPOINT!;
@@ -22,19 +24,123 @@ const requireEnv = (key: string) => {
   return value;
 };
 
+const unwrapJsonString = (raw: string, label: string, preferredKeys: string[] = []): string => {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    throw new Error(`${label} is empty`);
+  }
+
+  const searchKeys = [...preferredKeys, "value", "address", "secret", "privateKey", "key"];
+
+  if (!trimmed.startsWith("{")) {
+    return trimmed;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (typeof parsed === "string") {
+      return parsed.trim();
+    }
+    if (parsed && typeof parsed === "object") {
+      const record = parsed as Record<string, unknown>;
+      for (const key of searchKeys) {
+        const candidate = record[key];
+        if (typeof candidate === "string" && candidate.trim()) {
+          return candidate.trim();
+        }
+      }
+      const fallback = Object.values(record).find(
+        (value) => typeof value === "string" && value.trim()
+      ) as string | undefined;
+      if (fallback) {
+        return fallback.trim();
+      }
+    }
+  } catch (err: any) {
+    throw new Error(`${label} contains invalid JSON: ${err?.message ?? String(err)}`);
+  }
+
+  throw new Error(`${label} JSON payload does not contain a usable string value`);
+};
+
+const extractAddress = (raw: string, label: string, preferredKeys: string[] = []): string => {
+  const candidate = unwrapJsonString(raw, label, preferredKeys);
+  if (!ethers.isAddress(candidate)) {
+    throw new Error(`${label} must contain a valid address string`);
+  }
+  return ethers.getAddress(candidate);
+};
+
 const avaxRpcUrl = requireEnv("AVAX_RPC_URL");
-const settlementContractAddress = requireEnv("SETTLEMENT_CONTRACT_ADDRESS");
-const settlementSignerKey = requireEnv("SETTLEMENT_SIGNER_KEY");
-const opposingWalletAddress = requireEnv("OPPOSING_WALLET_ADDRESS");
+const settlementContractAddress = extractAddress(
+  requireEnv("SETTLEMENT_CONTRACT_ADDRESS"),
+  "SETTLEMENT_CONTRACT_ADDRESS",
+  ["contractAddress"]
+);
+const settlementSignerKeySecretArn = requireEnv("SETTLEMENT_SIGNER_KEY_SECRET_ARN");
+const opposingWalletAddress = extractAddress(
+  requireEnv("OPPOSING_WALLET_ADDRESS"),
+  "OPPOSING_WALLET_ADDRESS",
+  ["walletDeployer"]
+);
 const settlementConfirmations = Number(process.env.SETTLEMENT_CONFIRMATIONS ?? "1");
 
 const provider = new ethers.JsonRpcProvider(avaxRpcUrl);
-const signer = new ethers.Wallet(settlementSignerKey, provider);
-const settlementContract = new ethers.Contract(
-  settlementContractAddress,
-  settlementArtifact.abi,
-  signer
-);
+
+const secretPreferredKeys = ["privateKey", "value", "key"];
+
+const loadSecretString = async (
+  secretArn: string,
+  label: string,
+  preferredKeys: string[] = []
+): Promise<string> => {
+  const result = await secretsClient.send(
+    new GetSecretValueCommand({
+      SecretId: secretArn,
+    })
+  );
+  const secretBinary = result.SecretBinary;
+  const raw =
+    result.SecretString ??
+    (secretBinary ? Buffer.from(secretBinary).toString("utf8") : undefined);
+
+  if (!raw) {
+    throw new Error(`${label} secret (${secretArn}) did not contain a string value`);
+  }
+
+  return unwrapJsonString(raw, label, preferredKeys);
+};
+
+let settlementSignerKeyPromise: Promise<string> | undefined;
+const getSettlementSignerKey = async (): Promise<string> => {
+  if (!settlementSignerKeyPromise) {
+    settlementSignerKeyPromise = (async () => {
+      try {
+        return await loadSecretString(
+          settlementSignerKeySecretArn,
+          "SETTLEMENT_SIGNER_KEY",
+          secretPreferredKeys
+        );
+      } catch (err) {
+        console.error("Failed to load settlement signer key:", err);
+        throw err;
+      }
+    })();
+  }
+  return settlementSignerKeyPromise;
+};
+
+let settlementContractPromise: Promise<ethers.Contract> | undefined;
+const getSettlementContract = async (): Promise<ethers.Contract> => {
+  if (!settlementContractPromise) {
+    settlementContractPromise = (async () => {
+      const signerKey = await getSettlementSignerKey();
+      const signer = new ethers.Wallet(signerKey, provider);
+      return new ethers.Contract(settlementContractAddress, settlementArtifact.abi, signer);
+    })();
+  }
+  return settlementContractPromise;
+};
 
 const supportedPairSeparators = ["/", "-", "_"] as const;
 
@@ -314,7 +420,11 @@ export const handler = async (event: any) => {
       let settlementReceipt: TransactionReceipt | undefined;
 
       try {
-        const tx = await settlementContract.settleBatch(tradeHash, settlementComputation.balanceUpdates);
+        const settlementContract = await getSettlementContract();
+        const tx = await settlementContract.settleBatch(
+          tradeHash,
+          settlementComputation.balanceUpdates
+        );
         const receipt = await tx.wait(Math.max(1, settlementConfirmations));
         console.log("Settlement transaction mined:", receipt.hash);
         settlementReceipt = receipt;

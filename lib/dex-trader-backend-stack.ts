@@ -196,7 +196,7 @@ export class DexTraderBackendStack extends cdk.Stack {
         TRADES_TABLE: tradesTable.tableName,
         AVAX_RPC_URL: avaxRpcUrl,
         SETTLEMENT_CONTRACT_ADDRESS: contractAddress,
-        SETTLEMENT_SIGNER_KEY: matcherSignerKeySecret.secretValue.unsafeUnwrap(),
+        SETTLEMENT_SIGNER_KEY_SECRET_ARN: matcherSignerKeySecretArn,
         OPPOSING_WALLET_ADDRESS: opposingWalletAddressParam.stringValue,
         SETTLEMENT_CONFIRMATIONS: (matcherConfirmations ?? 1).toString(),
       },
@@ -206,6 +206,7 @@ export class DexTraderBackendStack extends cdk.Stack {
     tradeEventsQueue.grantSendMessages(matcherLambda);
     connectionsTable.grantReadData(matcherLambda);
     tradesTable.grantReadWriteData(matcherLambda);
+    matcherSignerKeySecret.grantRead(matcherLambda);
 
     // Grant matcher Lambda permission to manage WebSocket connections
     matcherLambda.addToRolePolicy(
@@ -492,7 +493,7 @@ export class DexTraderBackendStack extends cdk.Stack {
       environment: {
         AVAX_RPC_URL: avaxRpcUrl,
         SETTLEMENT_CONTRACT_ADDRESS: contractAddress,
-        SETTLEMENT_ADMIN_PRIVATE_KEY: adminPrivateKeySecret.secretValue.unsafeUnwrap(),
+        SETTLEMENT_ADMIN_PRIVATE_KEY_SECRET_ARN: adminPrivateKeySecretArn,
         SETTLEMENT_ADMIN_ADDRESS: adminAddressParam.stringValue,
         SETTLEMENT_ADMIN_CONFIRMATIONS: (adminConfirmations ?? 1).toString(),
       },
@@ -503,6 +504,7 @@ export class DexTraderBackendStack extends cdk.Stack {
       methods: [apigatewayv2.HttpMethod.POST],
       integration: new integrations.HttpLambdaIntegration('AssetAdminIntegration', assetAdminLambda),
     });
+    adminPrivateKeySecret.grantRead(assetAdminLambda);
 
     const generateMockDataLambda = new lambda.Function(this, 'DEXGenerateMockDataLambda', {
       runtime: lambda.Runtime.NODEJS_20_X,

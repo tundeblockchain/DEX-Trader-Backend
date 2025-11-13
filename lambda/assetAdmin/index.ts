@@ -1,3 +1,4 @@
+import { SecretsManagerClient, GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import { ethers } from "ethers";
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const settlementArtifact: { abi: any[] } = require("./abi/Settlement.json");
@@ -18,24 +19,138 @@ const requireEnv = (key: string) => {
   return value;
 };
 
+const unwrapJsonString = (raw: string, label: string, preferredKeys: string[] = []): string => {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    throw new Error(`${label} is empty`);
+  }
+
+  const searchKeys = [...preferredKeys, "value", "address", "secret", "privateKey", "key"];
+
+  if (!trimmed.startsWith("{")) {
+    return trimmed;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (typeof parsed === "string") {
+      return parsed.trim();
+    }
+    if (parsed && typeof parsed === "object") {
+      const record = parsed as Record<string, unknown>;
+      for (const key of searchKeys) {
+        const candidate = record[key];
+        if (typeof candidate === "string" && candidate.trim()) {
+          return candidate.trim();
+        }
+      }
+      const fallback = Object.values(record).find(
+        (value) => typeof value === "string" && value.trim()
+      ) as string | undefined;
+      if (fallback) {
+        return fallback.trim();
+      }
+    }
+  } catch (err: any) {
+    throw new Error(`${label} contains invalid JSON: ${err?.message ?? String(err)}`);
+  }
+
+  throw new Error(`${label} JSON payload does not contain a usable string value`);
+};
+
+const extractAddress = (raw: string, label: string, preferredKeys: string[] = []): string => {
+  const candidate = unwrapJsonString(raw, label, preferredKeys);
+  if (!ethers.isAddress(candidate)) {
+    throw new Error(`${label} must contain a valid address string`);
+  }
+  return ethers.getAddress(candidate);
+};
+
 const avaxRpcUrl = requireEnv("AVAX_RPC_URL");
-const settlementContractAddress = requireEnv("SETTLEMENT_CONTRACT_ADDRESS");
-const adminPrivateKey = requireEnv("SETTLEMENT_ADMIN_PRIVATE_KEY");
-const adminAddress = requireEnv("SETTLEMENT_ADMIN_ADDRESS").toLowerCase();
+const settlementContractAddress = extractAddress(
+  requireEnv("SETTLEMENT_CONTRACT_ADDRESS"),
+  "SETTLEMENT_CONTRACT_ADDRESS",
+  ["contractAddress"]
+);
+const adminPrivateKeySecretArn = requireEnv("SETTLEMENT_ADMIN_PRIVATE_KEY_SECRET_ARN");
+const adminAddress = extractAddress(
+  requireEnv("SETTLEMENT_ADMIN_ADDRESS"),
+  "SETTLEMENT_ADMIN_ADDRESS",
+  ["walletDeployer"]
+).toLowerCase();
 const confirmations = Number(process.env.SETTLEMENT_ADMIN_CONFIRMATIONS ?? "1");
 
 const provider = new ethers.JsonRpcProvider(avaxRpcUrl);
-const signer = new ethers.Wallet(adminPrivateKey, provider);
+const secretsClient = new SecretsManagerClient({});
 
-if (signer.address.toLowerCase() !== adminAddress) {
-  throw new Error("Admin private key does not correspond to SETTLEMENT_ADMIN_ADDRESS");
-}
+const loadSecretString = async (
+  secretArn: string,
+  label: string,
+  preferredKeys: string[] = []
+): Promise<string> => {
+  const result = await secretsClient.send(
+    new GetSecretValueCommand({
+      SecretId: secretArn,
+    })
+  );
 
-const contract = new ethers.Contract(
-  settlementContractAddress,
-  settlementArtifact.abi,
-  signer
-);
+  const secretBinary = result.SecretBinary;
+  const raw =
+    result.SecretString ?? (secretBinary ? Buffer.from(secretBinary).toString("utf8") : undefined);
+
+  if (!raw) {
+    throw new Error(`${label} secret (${secretArn}) did not contain a string value`);
+  }
+
+  return unwrapJsonString(raw, label, preferredKeys);
+};
+
+const secretPreferredKeys = ["privateKey", "value", "key"];
+
+let adminPrivateKeyPromise: Promise<string> | undefined;
+const getAdminPrivateKey = async (): Promise<string> => {
+  if (!adminPrivateKeyPromise) {
+    adminPrivateKeyPromise = (async () => {
+      try {
+        return await loadSecretString(
+          adminPrivateKeySecretArn,
+          "SETTLEMENT_ADMIN_PRIVATE_KEY",
+          secretPreferredKeys
+        );
+      } catch (err) {
+        console.error("Failed to load admin private key:", err);
+        throw err;
+      }
+    })();
+  }
+  return adminPrivateKeyPromise;
+};
+
+let adminSignerPromise: Promise<ethers.Wallet> | undefined;
+const getAdminSigner = async (): Promise<ethers.Wallet> => {
+  if (!adminSignerPromise) {
+    adminSignerPromise = (async () => {
+      const privateKey = await getAdminPrivateKey();
+      const signer = new ethers.Wallet(privateKey, provider);
+      if (signer.address.toLowerCase() !== adminAddress) {
+        throw new Error("Admin private key does not correspond to SETTLEMENT_ADMIN_ADDRESS");
+      }
+      return signer;
+    })();
+  }
+  return adminSignerPromise;
+};
+
+let contractPromise: Promise<ethers.Contract> | undefined;
+const getAdminContract = async (): Promise<ethers.Contract> => {
+  if (!contractPromise) {
+    contractPromise = (async () => {
+      const signer = await getAdminSigner();
+      return new ethers.Contract(settlementContractAddress, settlementArtifact.abi, signer);
+    })();
+  }
+  return contractPromise;
+};
 
 interface RegisterPayload {
   action: SupportedAction;
@@ -97,6 +212,7 @@ export const handler = async (event: any): Promise<HttpResponse> => {
 
     const { assetId, normalizedSymbol } = toAssetId(payload.symbol);
     const minConfirmations = Math.max(1, Number.isFinite(confirmations) ? confirmations : 1);
+    const contract = await getAdminContract();
     let txReceipt: ethers.TransactionReceipt;
 
     if (action === "register") {
